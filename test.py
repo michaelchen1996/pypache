@@ -1,10 +1,11 @@
 import configparser
 import re
+
 c = configparser.ConfigParser()
 c.read("config.ini")
-#print(c['server']['default'])
+# print(c['server']['default'])
 c['server']['default']
-#print(c)
+# print(c)
 
 default_page = b'''HTTP/1.1 200 OK\r
 Accept-Ranges: bytes\r
@@ -34,15 +35,16 @@ Content-Length: 32\r
 Cookie: JSESSIONID=dca7OgNETQ70QhB18noJv\r
 \r
 zjh=2014141463007&mm=michael2jwc'''
-#print(str)
+# print(str)
 
 
-#print(re.match(r'\O', request_page.decode("utf-8")).group(0))
-#print(request_page[:2]==b'PO')
+# print(re.match(r'\O', request_page.decode("utf-8")).group(0))
+# print(request_page[:2]==b'PO')
 dict = {}
-dict.update((('a',1),))
-#print(dict)
+dict.update((('a', 1),))
+# print(dict)
 import time
+
 t = 'Fri, 23 Oct 2009 08:06:04 GMT'
 temp = time.strptime(t, "%a, %d %b %Y %H:%M:%S GMT")
 print(time.mktime(time.strptime(t, "%a, %d %b %Y %H:%M:%S GMT")))
