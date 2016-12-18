@@ -102,57 +102,20 @@ responses = {
 
 
 class HTTP(object):
-    def __init__(self):
-        self.header = {}
-        self.version = ''
-        self.data = b''
-
-    def getData(self):
-        return self.data
-
-    def setData(self, data):
-        self.data = data
-
-    def getVersion(self):
-        return self.version
-
-    def setVersion(self, version):
+    def __init__(self, header=None, version='', data=b''):
+        self.header = header
+        if header is None:
+            self.header = {}
         self.version = version
+        self.data = data
 
 
 class HTTPRequest(HTTP):
-    def __init__(self):
+    def __init__(self, method=None, path=None):
         HTTP.__init__(self)
-        self.method = ''
-        self.path = ''
-        self.is_first = True
-        self.is_header = True
-
-    def recv(self, r_data):
-        self.data += r_data
-        if self.is_first:
-            ret = re.match(r'([A-Z]*) ([\S]*) ([\S]*)\r\n', self.data.decode('utf-8'))
-            if not ret:
-                return False
-            self.method = ret.group(1)
-            self.path = ret.group(2)
-            self.version = ret.group(3)
-            self.data = self.data[len(ret.group(0)):]
-            self.is_first = False
-        while self.is_header:
-            ret = re.match(r'([\S]*): ([\S ]*)\r\n', self.data.decode('utf-8'))
-            if ret:
-                self.header.update(((ret.group(1), ret.group(2)),))
-                self.data = self.data[len(ret.group(0)):]
-            elif re.match(r'\A\r\n', self.data.decode('utf-8')):
-                self.data = self.data[2:]
-                self.is_header = False
-            else:
-                return False
-        if 'Content-Length' in self.header and len(self.data) < int(self.header.get('Content-Length')):
-            return False
-        else:
-            return True
+        self.method = method
+        self.path = path
+        self.parameter = {}
 
 
 class HTTPResponse(HTTP):
@@ -160,6 +123,8 @@ class HTTPResponse(HTTP):
         HTTP.__init__(self)
         self.code = ''
         self.status = ''
+        self.version = ''
+        self.data = b''
 
     def dump2bytes(self):
         data = self.version + ' ' + self.code + ' ' + self.status + '\r\n'
@@ -178,88 +143,125 @@ class HTTPResponse(HTTP):
         self.data = ('<html><body><h1>%s %s</h1><p>%s</p></body></html>' % (self.code, self.status, info)).encode(
             'utf-8')
 
-    def make_response(self, http_request):
-        time.sleep(5)
-        self.version = http_request.getVersion()
-        # get param and path
-        # error in path and param
-        path = config.get('server', 'root') + http_request.path
-        is_file = False
-        # find file
-        try:
-            f = open(path, 'r')
-            is_file = True
-        except IOError:
-            for i in config.get('server', 'default').split('\n'):
-                default_path = path
+
+class HTTPWebServer(object):
+    def __init__(self, config_filename='config.ini'):
+        # Prepare to read .ini file
+        config = configparser.ConfigParser()
+        config.read(config_filename)
+        # read the parameters from .ini file
+        self.max_connect_num = config.getint('server', 'max_connect')
+        self.connect_num = 0
+        self.app_root = config.get('server', 'root')
+        self.port = config.getint('server', 'port')
+        self.recv_buf_size = config.getint('server', 'recv_buf_size')
+        self.default_pages = config.get('server', 'default').split('\n')
+        self.lock = threading.Lock()
+        # run
+        self.__run()
+
+    def __run(self):
+        if not os.path.exists(self.app_root):
+            os.makedirs(self.app_root)
+        # Establish TCP socket
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock.bind(('localhost', self.port))
+        self.sock.listen(self.max_connect_num)
+        while True:
+            if self.connect_num < self.max_connect_num:
+                threading.Thread(target=HTTPWebServer.__connection_task, args=((self,) + self.sock.accept())).start()
+
+    def __connection_task(self, connection, addr):
+        self.lock.acquire()
+        self.connect_num += 1
+        self.lock.release()
+        receive_data = b''
+        while True:
+            receive_data += connection.recv(self.recv_buf_size)
+            success, http_request = self.__parse_request(receive_data)
+            if success:
+                break
+        # response content
+        http_response = self.__make_response(http_request)
+        connection.sendall(http_response.dump2bytes())
+        connection.close()
+
+        self.lock.acquire()
+        self.connect_num -= 1
+        self.lock.release()
+
+    # parse the http request from client
+    def __parse_request(self, r_data):
+        # get the parameter
+        def get_parameter(src_str):
+            for triple in re.findall(r'(^|&)([a-zA-Z0-9]+)=([^&]*)', src_str):
+                http_request.parameter[triple[1]] = triple[2]
+
+        http_request = HTTPRequest()
+        ret = re.match(r'([A-Z]*) ([\S]*) ([\S]*)\r\n', r_data.decode('utf-8'))
+        if not ret:
+            return False, None
+        http_request.method = ret.group(1)
+        uri = ret.group(2).split('?')
+        http_request.path = uri[0]
+        if len(uri) > 1:
+            get_parameter(uri[1])
+        http_request.version = ret.group(3)
+        parsing_pos = len(ret.group(0))
+        # compile the pattern
+        regular = re.compile(r'([\S]*): ([\S ]*)\r\n')
+        ret = regular.match(r_data.decode('utf-8'), pos=parsing_pos)
+        while ret:
+            http_request.header[ret.group(1)] = ret.group(2)
+            parsing_pos += len(ret.group(0))
+            ret = regular.match(r_data.decode('utf-8'), pos=parsing_pos)
+        # match the end of header
+        regular_end = re.compile(r'\r\n')
+        if regular_end.match(r_data.decode('utf-8'), pos=parsing_pos):
+            parsing_pos += 2
+        else:
+            return False, None
+        print(http_request.header)
+        http_request.data = r_data[parsing_pos:]
+        if 'Content-Length' in http_request.header \
+                and len(http_request.data) < int(http_request.header.get('Content-Length')):
+            return False, None
+
+        get_parameter(http_request.data.decode('utf-8'))
+        print(http_request.parameter)
+        return True, http_request
+
+    def __make_response(self, http_request: HTTPRequest):
+        http_response = HTTPResponse()
+        http_response.version = http_request.version
+        path = self.app_root + http_request.path
+        if os.path.isdir(path):
+            for default_page in self.default_pages:
                 if path[-1] == '/':
-                    default_path += i
+                    path += default_page
                 else:
-                    default_path += '/' + i
-                try:
-                    f = open(default_path, 'r')
-                    is_file = True
-                except IOError:
-                    pass
-                if is_file:
+                    path += '/' + default_page
+                if os.path.isfile(path):
                     break
-            if not is_file:
-                print(path)
-                if os.path.exists(path):
-                    self.setCode('403')
+        if os.path.isfile(path):
+            try:
+                f = open(path, 'r')
+                last_time = http_request.header.get('Last-Modified')
+                # Last-Modified: Fri, 23 Oct 2009 08:06:04 GMT
+                if last_time and time.mktime(time.strptime(last_time, "%a, %d %b %Y %H:%M:%S GMT")) > os.stat(
+                        path).st_mtime:
+                    http_response.setCode('304')
                 else:
-                    self.setCode('404')
-        if is_file:
-            last_time = http_request.header.get('Last-Modified')
-            # Last-Modified: Fri, 23 Oct 2009 08:06:04 GMT
-            if last_time and time.mktime(time.strptime(last_time, "%a, %d %b %Y %H:%M:%S GMT")) > os.stat(
-                    path).st_mtime:
-                self.setCode('304')
-            else:
-                self.setCode('200')
-                self.data = f.read().encode('utf-8')
-            f.close()
-
-
-def task(connection, address):
-    # multi-thread test
-    global connect_num
-
-    lock.acquire()
-    connect_num += 1
-    lock.release()
-
-    # time.sleep(5)
-    http_request = HTTPRequest()
-    while True:
-        d = connection.recv(config.getint('server', 'recv_buf_size'))
-        if http_request.recv(d):
-            break
-            # response content
-    http_response = HTTPResponse()
-    http_response.make_response(http_request)
-    connection.sendall(http_response.dump2bytes())
-    connection.close()
-
-    lock.acquire()
-    connect_num -= 1
-    lock.release()
+                    http_response.setCode('200')
+                    http_response.data = f.read().encode('utf-8')
+                f.close()
+            except IOError:
+                print(str(IOError) + path)
+                http_response.setCode('403')
+        else:
+            http_response.setCode('404')
+        return http_response
 
 
 if __name__ == '__main__':
-    config = configparser.ConfigParser()
-    config.read("config.ini")
-
-    if not os.path.exists(config.get('server', 'root')):
-        os.makedirs(config.get('server', 'root'))
-
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind((config.get('server', 'host'), config.getint('server', 'port')))
-    sock.listen(config.getint('server', 'max_connect'))
-    connect_num = 0
-    lock = threading.Lock()
-
-    while True:
-        if connect_num < config.getint('server', 'max_connect'):
-            t = threading.Thread(target=task, args=sock.accept())
-            t.start()
+    server = HTTPWebServer(config_filename="config.ini")
