@@ -32,7 +32,7 @@ Referer: http://202.115.47.141/login.jsp\r
 Content-Length: 32\r
 Cookie: JSESSIONID=dca7OgNETQ70QhB18noJv\r
 \r
-zjh=2014141463007&mm=michael2jwc'''
+zjh=000000000000&mm=11111111'''
 
 responses = {
     100: ('Continue', 'Request received, please continue'),
