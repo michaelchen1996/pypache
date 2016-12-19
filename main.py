@@ -4,6 +4,7 @@ import time
 import configparser
 import re
 import os
+import importlib
 
 sample_response = b'''HTTP/1.1 200 OK\r
 Accept-Ranges: bytes\r
@@ -156,16 +157,28 @@ class HTTPWebServer(object):
         self.port = config.getint('server', 'port')
         self.recv_buf_size = config.getint('server', 'recv_buf_size')
         self.default_pages = config.get('server', 'default').split('\n')
+        # init modules
+        self.url_rewrite = config.getboolean('modules','mod_url_rewrite')
+        self.__init_modules()
+
         self.lock = threading.Lock()
         # run
         self.__run()
+
+    def __init_modules(self):
+        try:
+            if self.url_rewrite:
+                self.mod_url_rewrite = importlib.import_module('modules.url_rewrite.url_rewrite')
+        except ImportError as e:
+            print("import module error: " + repr(e))
+
 
     def __run(self):
         if not os.path.exists(self.app_root):
             os.makedirs(self.app_root)
         # Establish TCP socket
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.bind(('localhost', self.port))
+        self.sock.bind(('127.0.0.1', self.port))
         self.sock.listen(self.max_connect_num)
         while True:
             if self.connect_num < self.max_connect_num:
@@ -202,7 +215,11 @@ class HTTPWebServer(object):
         if not ret:
             return False, None
         http_request.method = ret.group(1)
-        uri = ret.group(2).split('?')
+        uri = ret.group(2)
+        # try to rewrite url if the module is enabled
+        if self.url_rewrite:
+            uri = self.mod_url_rewrite.rewrite(uri)
+        uri = uri.split('?')
         http_request.path = uri[0]
         if len(uri) > 1:
             get_parameter(uri[1])
