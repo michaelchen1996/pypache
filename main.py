@@ -5,6 +5,7 @@ import configparser
 import re
 import os
 import importlib
+import uuid
 
 sample_response = b'''HTTP/1.1 200 OK\r
 Accept-Ranges: bytes\r
@@ -116,7 +117,12 @@ class HTTPRequest(HTTP):
         HTTP.__init__(self)
         self.method = method
         self.path = path
-        self.parameter = {}
+        self.parameters = {}
+
+    def getCookie(self):
+        if 'Cookie' in self.header:
+            return self.header['Cookie']
+        return None
 
 
 class HTTPResponse(HTTP):
@@ -129,20 +135,34 @@ class HTTPResponse(HTTP):
 
     def dump2bytes(self):
         data = self.version + ' ' + self.code + ' ' + self.status + '\r\n'
-        for key, value in self.header:
+        for key in self.header:
+            value = self.header[key]
             data += key + ': ' + value + '\r\n'
+        # 设置默认值
+        # if 'Content-Type' not in self.header:
+        #     data += 'Content-Type: text/html\r\n'
         data += '\r\n'
         r_data = data.encode('utf-8')
         r_data += self.data
         return r_data
 
     def setCode(self, code):
+        code = str(code)
         print(code)
         self.code = code
         self.status = responses[int(code)][0]
         info = responses[int(self.code)][1]
         self.data = ('<html><body><h1>%s %s</h1><p>%s</p></body></html>' % (self.code, self.status, info)).encode(
             'utf-8')
+
+    def setCookie(self, cookie):
+        self.header['Set-Cookie'] = cookie
+
+    def setContentType(self, content_type):
+        self.header['Content-Type'] = content_type
+
+    def setDate(self, date):
+        self.header['Date'] = date
 
 
 class HTTPWebServer(object):
@@ -162,6 +182,7 @@ class HTTPWebServer(object):
         self.__init_modules()
 
         self.lock = threading.Lock()
+        self.api_content = open("WebServerAPI.py").read()
         # run
         self.__run()
 
@@ -208,7 +229,7 @@ class HTTPWebServer(object):
         # get the parameter
         def get_parameter(src_str):
             for triple in re.findall(r'(^|&)([a-zA-Z0-9]+)=([^&]*)', src_str):
-                http_request.parameter[triple[1]] = triple[2]
+                http_request.parameters[triple[1]] = triple[2]
 
         http_request = HTTPRequest()
         ret = re.match(r'([A-Z]*) ([\S]*) ([\S]*)\r\n', r_data.decode('utf-8'))
@@ -245,7 +266,7 @@ class HTTPWebServer(object):
             return False, None
 
         get_parameter(http_request.data.decode('utf-8'))
-        print(http_request.parameter)
+        print(http_request.parameters)
         return True, http_request
 
     def __make_response(self, http_request: HTTPRequest):
@@ -262,7 +283,7 @@ class HTTPWebServer(object):
                     break
         if os.path.isfile(path):
             try:
-                f = open(path, 'r')
+                f = open(path, 'br')
                 last_time = http_request.header.get('Last-Modified')
                 # Last-Modified: Fri, 23 Oct 2009 08:06:04 GMT
                 if last_time and time.mktime(time.strptime(last_time, "%a, %d %b %Y %H:%M:%S GMT")) > os.stat(
@@ -270,7 +291,82 @@ class HTTPWebServer(object):
                     http_response.setCode('304')
                 else:
                     http_response.setCode('200')
-                    http_response.data = f.read().encode('utf-8')
+                    if path.split('.')[-1] == 'py':
+                        # 动态页面
+                        # 准备data
+                        data = {'params': http_request.parameters, 'cookie': http_request.getCookie(),
+                                'reqType': http_request.method}
+                        out = ""
+                        # 生成命名管道名
+                        pipe_name = str(uuid.uuid4())
+                        # 创建管道
+                        if not os.path.exists(pipe_name):
+                            os.mkfifo(pipe_name)
+
+                        pid = os.fork()
+                        if pid != 0:
+                            # in parent
+                            pipe = open(pipe_name, 'r')
+                            rt = pipe.readline()
+                            reg_command = re.compile(r'command:([\S]*)')
+                            reg_out = re.compile(r'out:([\S]*)')
+                            reg_end = re.compile(r'end:')
+
+                            # 下面这部分写得有点反人类，但是我还没有找到更好方法:)
+                            # call by command in eval
+                            def setCookie(cookie):
+                                http_response.setCookie(cookie)
+
+                            def setContentType(content_type):
+                                http_response.setContentType(content_type)
+
+                            def setCode(code):
+                                http_response.setCode(code)
+
+                            while rt:
+                                ret_command = reg_command.match(rt)
+                                if ret_command:
+                                    eval(ret_command.group(1))
+                                    rt = pipe.readline()
+                                    continue
+                                ret_out = reg_out.match(rt)
+                                if ret_out:
+                                    out += ret_out.group(1)
+                                    rt = pipe.readline()
+                                    continue
+                                ret_end = reg_end.match(rt)
+                                if reg_end:
+                                    ret_end.group(1)
+                                    break
+                            # 关闭和删除命名管道
+                            pipe.close()
+                            os.remove(pipe_name)
+                        else:
+                            # in child
+                            os.execlp('python3', 'python3', path, '--pipe_name', pipe_name, '--data', str(data))
+                            pass
+                        http_response.data = out.encode('utf-8')
+
+                    else:
+                        # 静态页面
+                        http_response.data = f.read()
+                        postfix = path.split('.')[-1].lower()
+                        if postfix in ['txt', 'html', 'htm']:
+                            http_response.setContentType('text/html')
+                        elif postfix in ['jpg', 'jpeg']:
+                            http_response.setContentType('image/jpeg')
+                        elif postfix == 'png':
+                            http_response.setContentType('image/png')
+                        elif postfix == 'gif':
+                            http_response.setContentType('image/gif')
+                        elif postfix == 'svg':
+                            http_response.setContentType('image/svg+xml')
+                        elif postfix == 'css':
+                            http_response.setContentType('text/css')
+                        elif postfix == 'js':
+                            http_response.setContentType('application/javascript')
+                        elif postfix == 'json':
+                            http_response.setContentType('application/json')
                 f.close()
             except IOError:
                 print(str(IOError) + path)
