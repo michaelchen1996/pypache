@@ -134,11 +134,12 @@ class HTTPResponse(HTTP):
 
     def dump2bytes(self):
         data = self.version + ' ' + self.code + ' ' + self.status + '\r\n'
-        for key, value in self.header:
+        for key in self.header:
+            value = self.header[key]
             data += key + ': ' + value + '\r\n'
         # 设置默认值
-        if 'Content-Type' not in self.header:
-            data += 'Content-Type: text/html\r\n'
+        # if 'Content-Type' not in self.header:
+        #     data += 'Content-Type: text/html\r\n'
         data += '\r\n'
         r_data = data.encode('utf-8')
         r_data += self.data
@@ -265,7 +266,7 @@ class HTTPWebServer(object):
                     break
         if os.path.isfile(path):
             try:
-                f = open(path, 'r')
+                f = open(path, 'br')
                 last_time = http_request.header.get('Last-Modified')
                 # Last-Modified: Fri, 23 Oct 2009 08:06:04 GMT
                 if last_time and time.mktime(time.strptime(last_time, "%a, %d %b %Y %H:%M:%S GMT")) > os.stat(
@@ -327,8 +328,24 @@ class HTTPWebServer(object):
 
                     else:
                         # 静态页面
-                        http_response.data = f.read().encode('utf-8')
-
+                        http_response.data = f.read()
+                        postfix = path.split('.')[-1].lower()
+                        if postfix in ['txt', 'html', 'htm']:
+                            http_response.setContentType('text/html')
+                        elif postfix in ['jpg', 'jpeg']:
+                            http_response.setContentType('image/jpeg')
+                        elif postfix == 'png':
+                            http_response.setContentType('image/png')
+                        elif postfix == 'gif':
+                            http_response.setContentType('image/gif')
+                        elif postfix == 'svg':
+                            http_response.setContentType('image/svg+xml')
+                        elif postfix == 'css':
+                            http_response.setContentType('text/css')
+                        elif postfix == 'js':
+                            http_response.setContentType('application/javascript')
+                        elif postfix == 'json':
+                            http_response.setContentType('application/json')
                 f.close()
             except IOError:
                 print(str(IOError) + path)
