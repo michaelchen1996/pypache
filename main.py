@@ -136,18 +136,31 @@ class HTTPResponse(HTTP):
         data = self.version + ' ' + self.code + ' ' + self.status + '\r\n'
         for key, value in self.header:
             data += key + ': ' + value + '\r\n'
+        # 设置默认值
+        if 'Content-Type' not in self.header:
+            data += 'Content-Type: text/html\r\n'
         data += '\r\n'
         r_data = data.encode('utf-8')
         r_data += self.data
         return r_data
 
     def setCode(self, code):
+        code = str(code)
         print(code)
         self.code = code
         self.status = responses[int(code)][0]
         info = responses[int(self.code)][1]
         self.data = ('<html><body><h1>%s %s</h1><p>%s</p></body></html>' % (self.code, self.status, info)).encode(
             'utf-8')
+
+    def setCookie(self, cookie):
+        self.header['Set-Cookie'] = cookie
+
+    def setContentType(self, content_type):
+        self.header['Content-Type'] = content_type
+
+    def setDate(self, date):
+        self.header['Date'] = date
 
 
 class HTTPWebServer(object):
@@ -279,10 +292,21 @@ class HTTPWebServer(object):
                             reg_command = re.compile(r'command:([\S]*)')
                             reg_out = re.compile(r'out:([\S]*)')
                             reg_end = re.compile(r'end:')
+
+                            # call by command in eval
+                            def setCookie(cookie):
+                                http_response.setCookie(cookie)
+
+                            def setContentType(content_type):
+                                http_response.setContentType(content_type)
+
+                            def setCode(code):
+                                http_response.setCode(code)
+
                             while rt:
                                 ret_command = reg_command.match(rt)
                                 if ret_command:
-                                    ret_command.group(1)
+                                    eval(ret_command.group(1))
                                     rt = pipe.readline()
                                     continue
                                 ret_out = reg_out.match(rt)

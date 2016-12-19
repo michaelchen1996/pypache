@@ -14,6 +14,14 @@ class HttpServlet(object):
         self.parameters = self.data['params']
         self.cookie = self.data['cookie']
         self.reqType = self.data['reqType']
+        self.__run()
+        self.pipe.close()
+
+    def __run(self):
+        if self.reqType == 'POST':
+            self._doPOST(self.printToWeb)
+        else:
+            self._doGET(self.printToWeb)
 
     def getCookie(self):
         return self.cookie
@@ -23,22 +31,35 @@ class HttpServlet(object):
             return self.parameters[param]
         return None
 
+    def getParameters(self):
+        return self.parameters
+
     def getRequestType(self):
         return self.reqType
 
-    def setContentType(self, type):
-        pass
-
-    # 调用此函数将立即返回
-    def setResponseCode(self, code):
-        pass
-
-    def printToWeb(self, text):
-        self.pipe.write("out:" + text + "\n")
+    def setContentType(self, content_type):
+        self.pipe.write("command:" + "setContentType(" + str(content_type) + ")")
         pass
 
     def setCookie(self, set_cookie):
+        self.pipe.write("command:" + "setCookie(" + str(set_cookie) + ")")
         pass
 
+    def setResponseCode(self, code):
+        self.pipe.write("command:" + "setCode(" + str(code) + ")")
+        pass
 
-httpServlet = HttpServlet()
+    def printToWeb(self, text):
+        if text is None:
+            text = ''
+        self.pipe.write("out:" + str(text) + "\n")
+        pass
+
+    def _doGET(self, echo):
+        # 默认禁止get方法
+        self.setResponseCode(501)
+
+    def _doPOST(self, echo):
+        # 默认禁止get方法
+        self.setResponseCode(501)
+        pass
