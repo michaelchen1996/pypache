@@ -56,10 +56,10 @@ class HttpServlet(object):
         pass
 
     def _doGET(self, echo):
-        # Forbid get function defaultly
+        # 默认禁止get方法
         self.setResponseCode(501)
 
     def _doPOST(self, echo):
-        # Forbid get function defaultly
+        # 默认禁止get方法
         self.setResponseCode(501)
         pass
