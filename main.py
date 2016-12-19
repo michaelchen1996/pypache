@@ -4,6 +4,7 @@ import time
 import configparser
 import re
 import os
+import uuid
 
 sample_response = b'''HTTP/1.1 200 OK\r
 Accept-Ranges: bytes\r
@@ -115,7 +116,12 @@ class HTTPRequest(HTTP):
         HTTP.__init__(self)
         self.method = method
         self.path = path
-        self.parameter = {}
+        self.parameters = {}
+
+    def getCookie(self):
+        if 'Cookie' in self.header:
+            return self.header['Cookie']
+        return None
 
 
 class HTTPResponse(HTTP):
@@ -157,6 +163,7 @@ class HTTPWebServer(object):
         self.recv_buf_size = config.getint('server', 'recv_buf_size')
         self.default_pages = config.get('server', 'default').split('\n')
         self.lock = threading.Lock()
+        self.api_content = open("WebServerAPI.py").read()
         # run
         self.__run()
 
@@ -195,7 +202,7 @@ class HTTPWebServer(object):
         # get the parameter
         def get_parameter(src_str):
             for triple in re.findall(r'(^|&)([a-zA-Z0-9]+)=([^&]*)', src_str):
-                http_request.parameter[triple[1]] = triple[2]
+                http_request.parameters[triple[1]] = triple[2]
 
         http_request = HTTPRequest()
         ret = re.match(r'([A-Z]*) ([\S]*) ([\S]*)\r\n', r_data.decode('utf-8'))
@@ -228,7 +235,7 @@ class HTTPWebServer(object):
             return False, None
 
         get_parameter(http_request.data.decode('utf-8'))
-        print(http_request.parameter)
+        print(http_request.parameters)
         return True, http_request
 
     def __make_response(self, http_request: HTTPRequest):
@@ -253,7 +260,51 @@ class HTTPWebServer(object):
                     http_response.setCode('304')
                 else:
                     http_response.setCode('200')
-                    http_response.data = f.read().encode('utf-8')
+                    if path.split('.')[-1] == 'py':
+                        # 动态页面
+                        pipe_name = str(uuid.uuid4())
+                        # 准备data
+                        data = {'params': http_request.parameters, 'cookie': http_request.getCookie(),
+                                'reqType': http_request.method}
+                        out = ""
+                        # 创建管道
+                        if not os.path.exists(pipe_name):
+                            os.mkfifo(pipe_name)
+
+                        pid = os.fork()
+                        if pid != 0:
+                            # in parent
+                            pipe = open(pipe_name, 'r')
+                            rt = pipe.readline()
+                            reg_command = re.compile(r'command:([\S]*)')
+                            reg_out = re.compile(r'out:([\S]*)')
+                            reg_end = re.compile(r'end:')
+                            while rt:
+                                ret_command = reg_command.match(rt)
+                                if ret_command:
+                                    ret_command.group(1)
+                                    rt = pipe.readline()
+                                    continue
+                                ret_out = reg_out.match(rt)
+                                if ret_out:
+                                    out += ret_out.group(1)
+                                    rt = pipe.readline()
+                                    continue
+                                ret_end = reg_end.match(rt)
+                                if reg_end:
+                                    ret_end.group(1)
+                                    break
+                            pipe.close()
+                        else:
+                            # in child
+                            os.execlp('python3', 'python3', path, '--pipe_name', pipe_name, '--data', str(data))
+                            pass
+                        http_response.data = out.encode('utf-8')
+
+                    else:
+                        # 静态页面
+                        http_response.data = f.read().encode('utf-8')
+
                 f.close()
             except IOError:
                 print(str(IOError) + path)
