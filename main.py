@@ -276,11 +276,12 @@ class HTTPWebServer(object):
                     http_response.setCode('200')
                     if path.split('.')[-1] == 'py':
                         # 动态页面
-                        pipe_name = str(uuid.uuid4())
                         # 准备data
                         data = {'params': http_request.parameters, 'cookie': http_request.getCookie(),
                                 'reqType': http_request.method}
                         out = ""
+                        # 生成命名管道名
+                        pipe_name = str(uuid.uuid4())
                         # 创建管道
                         if not os.path.exists(pipe_name):
                             os.mkfifo(pipe_name)
@@ -294,6 +295,7 @@ class HTTPWebServer(object):
                             reg_out = re.compile(r'out:([\S]*)')
                             reg_end = re.compile(r'end:')
 
+                            # 下面这部分写得有点反人类，但是我还没有找到更好方法:)
                             # call by command in eval
                             def setCookie(cookie):
                                 http_response.setCookie(cookie)
@@ -319,7 +321,9 @@ class HTTPWebServer(object):
                                 if reg_end:
                                     ret_end.group(1)
                                     break
+                            # 关闭和删除命名管道
                             pipe.close()
+                            os.remove(pipe_name)
                         else:
                             # in child
                             os.execlp('python3', 'python3', path, '--pipe_name', pipe_name, '--data', str(data))
