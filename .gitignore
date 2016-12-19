@@ -121,8 +121,9 @@ Temporary Items
 .idea/
 
 #Visual Studio
-.suo
+*.suo
 *.sln
 *.pyproj
 *.TMP
 *.tmp
+module1.py
