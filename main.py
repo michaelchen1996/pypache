@@ -177,6 +177,12 @@ class HTTPWebServer(object):
         self.port = config.getint('server', 'port')
         self.recv_buf_size = config.getint('server', 'recv_buf_size')
         self.default_pages = config.get('server', 'default').split('\n')
+        # get the constrained ip configure
+        self.constrained_ip_count = config.getint('constrained ip', 'count')
+        self.constrained_ip_config = []
+        for i in range(0, self.constrained_ip_count):
+            ip_tuple = (config.get('constrained ip', 'ip' + str(i)), config.get('constrained ip', 'dst_path' + str(i)), config.get('constrained ip', 'act_path' + str(i)))
+            self.constrained_ip_config.append(ip_tuple)
         # init modules
         self.url_rewrite = config.getboolean('modules','mod_url_rewrite')
         self.__init_modules()
@@ -210,13 +216,14 @@ class HTTPWebServer(object):
         self.connect_num += 1
         self.lock.release()
         receive_data = b''
+
         while True:
             receive_data += connection.recv(self.recv_buf_size)
             success, http_request = self.__parse_request(receive_data)
             if success:
                 break
         # response content
-        http_response = self.__make_response(http_request)
+        http_response = self.__make_response(http_request, connection.getpeername()[0])
         connection.sendall(http_response.dump2bytes())
         connection.close()
 
@@ -269,10 +276,18 @@ class HTTPWebServer(object):
         print(http_request.parameters)
         return True, http_request
 
-    def __make_response(self, http_request: HTTPRequest):
+    def __make_response(self, http_request: HTTPRequest, client_ip):
         http_response = HTTPResponse()
         http_response.version = http_request.version
+        #get request file path
         path = self.app_root + http_request.path
+        for ip_config in self.constrained_ip_config:
+            print(client_ip + ',' + http_request.path)
+            if ip_config[0] == client_ip and ip_config[1] == http_request.path:
+                path = self.app_root + ip_config[2]
+                break
+        print(path)
+
         if os.path.isdir(path):
             for default_page in self.default_pages:
                 if path[-1] == '/':

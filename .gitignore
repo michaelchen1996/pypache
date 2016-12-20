@@ -119,3 +119,11 @@ Network Trash Folder
 Temporary Items
 .apdisk
 .idea/
+
+#Visual Studio
+*.suo
+*.sln
+*.pyproj
+*.TMP
+*.tmp
+module1.py
